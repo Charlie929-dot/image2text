@@ -1,5 +1,8 @@
 {
-  "name": "app-builder-workspace",
+  "name": "luowen",
+  "version": "0.1.0",
+  "description": "本地优先的 Windows 图片转文字与视觉描述工具",
+  "author": "Luowen",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -8,7 +11,12 @@
   },
   "scripts": {
     "dev": "node scripts/with-app-env.mjs vite dev --host 0.0.0.0 --port 8080",
+    "predev": "node scripts/copy-ocr-assets.mjs",
+    "prebuild": "node scripts/copy-ocr-assets.mjs",
     "build": "node scripts/with-app-env.mjs vite build && npm run db:migrate",
+    "desktop:dev": "electron electron/main.cjs",
+    "desktop:dir": "node scripts/desktop-build.mjs && electron-builder --dir --win",
+    "desktop:win": "node scripts/desktop-build.mjs && electron-builder --win nsis",
     "db:migrate": "node scripts/migrate.mjs",
     "build:dev": "node scripts/with-app-env.mjs vite build --mode development",
     "preview": "node scripts/with-app-env.mjs vite preview",
@@ -50,12 +58,15 @@
     "@tanstack/react-start": "^1.168.60",
     "@tanstack/react-table": "^8.21.0",
     "@tanstack/router-plugin": "^1.168.0",
+    "@tesseract.js-data/chi_sim": "^1.0.0",
+    "@tesseract.js-data/eng": "^1.0.0",
     "@vitejs/plugin-react": "^5.2.0",
     "better-auth": "~1.6.30",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.0.0",
+    "https-proxy-agent": "^9.1.0",
     "jose": "6.2.9",
     "kysely": "^0.28.5",
     "lightningcss": "^1.28.0",
@@ -71,6 +82,7 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.3.0",
+    "tesseract.js": "^7.0.0",
     "tw-animate-css": "^1.3.4",
     "typescript": "^5.7.0",
     "vaul": "^1.1.2",
@@ -84,6 +96,8 @@
     "@types/pg": "^8.11.10",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9.20.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",
@@ -93,5 +107,18 @@
     "playwright": "^1.62.0",
     "prettier": "^3.4.0",
     "typescript-eslint": "^8.56.1"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.luowen.desktop",
+    "productName": "落文",
+    "directories": { "output": "release" },
+    "files": ["electron/**/*", "dist/**/*", "public/ocr/**/*", "package.json"],
+    "extraResources": [
+      { "from": ".output", "to": "server-output" },
+      { "from": "public", "to": "public" }
+    ],
+    "win": { "target": ["nsis"] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
   }
 }

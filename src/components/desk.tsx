@@ -12,10 +12,12 @@ import {
   type Mode,
 } from "@/lib/manuscript";
 import { readImage } from "@/lib/vision.functions";
+import { readImageLocally } from "@/lib/ocr";
 
 const DRAFT_KEY = "luowen.draft";
 const MODE_KEY = "luowen.mode";
 const LANG_KEY = "luowen.lang";
+const PROVIDER_KEY = "luowen.provider";
 const HIST_KEY = "luowen.history";
 
 const MODES: { id: Mode; label: string }[] = [
@@ -73,6 +75,10 @@ export function Desk() {
   const [text, setText] = useState("");
   const [mode, setMode] = useState<Mode>("full");
   const [lang, setLang] = useState<Lang>("zh");
+  const [provider, setProvider] = useState<"local" | "cloud">("local");
+  const [cloudKey, setCloudKey] = useState("");
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudNotice, setCloudNotice] = useState("");
   const [history, setHistory] = useState<HistItem[]>([]);
   const [caret, setCaret] = useState({ start: 0, end: 0 });
   const [status, setStatus] = useState("");
@@ -92,6 +98,7 @@ export function Desk() {
   const textDirty = useRef(false);
   const modeDirty = useRef(false);
   const langDirty = useRef(false);
+  const providerDirty = useRef(false);
   const queueRef = useRef<Job[]>([]);
   const activeRef = useRef(0);
   const runJobRef = useRef<(job: Job) => Promise<void>>(async () => {});
@@ -138,14 +145,20 @@ export function Desk() {
   runJobRef.current = async (job) => {
     try {
       const prepared = await fileToJpeg(job.file);
-      const result = await readImage({
-        data: {
-          dataUrl: prepared.dataUrl,
-          filename: job.file.name || "图片",
-          mode: modeRef.current,
-          lang: langRef.current,
-        },
-      });
+      const localText = await readImageLocally(prepared.dataUrl);
+      const result = provider === "local"
+        ? { ok: true as const, text: localText }
+        : window.luowenDesktop
+          ? { ok: true as const, text: await window.luowenDesktop.cloudVision({ imageDataUrl: prepared.dataUrl, ocrText: localText }) }
+          : await readImage({
+              data: {
+                dataUrl: prepared.dataUrl,
+                filename: job.file.name || "图片",
+                mode: modeRef.current,
+                lang: langRef.current,
+                ocrText: localText,
+              },
+            });
       if (!result.ok) {
         const removed = removeMarker(textRef.current, job.marker);
         commit(removed.text, removed.caret);
@@ -156,7 +169,7 @@ export function Desk() {
       const applied = replaceMarker(textRef.current, job.marker, block);
       commit(applied.text, applied.caret);
       remember(job.file.name || "图片", prepared.thumb, result.text);
-      setStatus("已落在光标处");
+      setStatus(provider === "local" ? "本地 OCR 完成，图片未上传" : "云端视觉描述完成");
       try {
         await navigator.clipboard.writeText(result.text);
         setStatus("已落在光标处，并复制到剪贴板");
@@ -227,6 +240,10 @@ export function Desk() {
       }
       const savedLang = localStorage.getItem(LANG_KEY);
       if (!langDirty.current && (savedLang === "zh" || savedLang === "en")) setLang(savedLang);
+      const savedProvider = localStorage.getItem(PROVIDER_KEY);
+      if (!providerDirty.current && (savedProvider === "local" || savedProvider === "cloud")) {
+        setProvider(savedProvider);
+      }
       const raw = localStorage.getItem(HIST_KEY);
       if (raw) {
         const parsed: unknown = JSON.parse(raw);
@@ -248,10 +265,11 @@ export function Desk() {
     try {
       localStorage.setItem(MODE_KEY, mode);
       localStorage.setItem(LANG_KEY, lang);
+      localStorage.setItem(PROVIDER_KEY, provider);
     } catch {
       /* ignore */
     }
-  }, [loaded, mode, lang]);
+  }, [loaded, mode, lang, provider]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -282,6 +300,26 @@ export function Desk() {
       window.removeEventListener("dragover", blockNavigate);
       window.removeEventListener("drop", blockNavigate);
     };
+  }, []);
+
+  useEffect(() => {
+    const desktop = window.luowenDesktop;
+    if (!desktop) return;
+    void desktop.getCloudSettings().then((settings) => setCloudReady(settings.enabled));
+    const unsubscribeStatus = desktop.onHotkeyStatus(setStatus);
+    const unsubscribeOcr = desktop.onHotkeyOcr((imageDataUrl) => {
+      setStatus("正在本地识别剪贴板图片…");
+      void readImageLocally(imageDataUrl)
+        .then(async (text) => {
+          await desktop.pasteResult(text);
+          setLastBlock(text);
+          setStatus("本地识别完成，已粘贴到先前光标处");
+        })
+        .catch((error: unknown) => {
+          setStatus(error instanceof Error ? error.message : "本地 OCR 失败");
+        });
+    });
+    return () => { unsubscribeStatus(); unsubscribeOcr(); };
   }, []);
 
   function syncCaret(el: HTMLTextAreaElement) {
@@ -354,11 +392,64 @@ export function Desk() {
           <div className="min-w-0">
             <h1 className="font-serif text-xl text-balance">落文</h1>
             <p className="text-sm text-pretty text-muted">
-              把图片拖进窗口，文字落在这篇文稿的光标上。要贴到别的窗口，用复制。
+              本地 OCR 默认离线识字。Windows 桌面版按 Ctrl+Shift+O，可把剪贴板图片识别后粘贴到原光标。
             </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-full bg-cream/10 p-1" role="group" aria-label="识别方式">
+            {([
+              ["local", "本地 OCR"],
+              ["cloud", "云端视觉"],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={provider === id}
+                className={`min-h-11 rounded-full px-4 text-sm ${focusRing} ${
+                  provider === id ? "bg-seal text-paper" : "text-cream"
+                }`}
+                onClick={() => {
+                  providerDirty.current = true;
+                  setProvider(id);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {window.luowenDesktop ? (
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const desktop = window.luowenDesktop;
+                if (!desktop) return;
+                void desktop.setCloudKey(cloudKey).then(({ enabled }) => {
+                  setCloudReady(enabled);
+                  setCloudKey("");
+                  setCloudNotice(enabled ? "SiliconFlow key 已加密保存" : "已移除 SiliconFlow key");
+                }).catch((error: unknown) => {
+                  setCloudNotice(error instanceof Error ? error.message : "保存失败");
+                });
+              }}
+            >
+              <label className="sr-only" htmlFor="siliconflow-key">SiliconFlow API key</label>
+              <input
+                id="siliconflow-key"
+                type="password"
+                autoComplete="new-password"
+                value={cloudKey}
+                onChange={(event) => setCloudKey(event.target.value)}
+                placeholder={cloudReady ? "云端密钥已保存" : "SiliconFlow API key"}
+                className="min-h-11 w-52 bg-paper px-3 text-sm text-walnut placeholder:text-walnut/50"
+              />
+              <button type="submit" className={`min-h-11 px-3 text-sm ring-1 ring-cream/20 ${focusRing}`}>
+                保存密钥
+              </button>
+              {cloudNotice ? <span className="text-xs text-muted" role="status">{cloudNotice}</span> : null}
+            </form>
+          ) : null}
           <div className="flex rounded-full bg-cream/10 p-1" role="group" aria-label="详略">
             {MODES.map((item) => (
               <button

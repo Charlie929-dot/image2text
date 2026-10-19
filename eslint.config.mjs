@@ -14,11 +14,16 @@ export default tseslint.config(
       ".vercel/**",
       ".nitro/**",
       "node_modules/**",
+      "public/ocr/**",
       "src/routeTree.gen.ts",
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ["electron/**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
   {
     files: ["**/*.{ts,tsx,js,jsx,mjs,cjs}"],
     languageOptions: {

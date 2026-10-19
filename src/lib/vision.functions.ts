@@ -8,6 +8,7 @@ type Payload = {
   filename: string;
   mode: Mode;
   lang: Lang;
+  ocrText?: string;
 };
 
 function xmlName(name: string): string {
@@ -23,7 +24,7 @@ function asLang(value: unknown): Lang {
   return value === "en" ? "en" : "zh";
 }
 
-function buildPrompt(mode: Mode, lang: Lang, filename: string): string {
+function buildPrompt(mode: Mode, lang: Lang, filename: string, ocrText = ""): string {
   const name = xmlName(filename);
   const langLine =
     lang === "zh"
@@ -39,6 +40,9 @@ function buildPrompt(mode: Mode, lang: Lang, filename: string): string {
     "Convert this image into a textual surrogate another language model can use without the pixels.",
     langLine,
     density,
+    ocrText.trim()
+      ? `A local OCR pass transcribed the following visible text. Preserve it verbatim and use it to correct small labels and numbers:\n${ocrText.slice(0, 8000)}`
+      : "",
     "Output only the XML below. No markdown fences, no preamble, no explanation.",
     `<image name="${name}">`,
     "<scene>...</scene>",
@@ -99,14 +103,20 @@ async function postResponses(
   apiKey: string,
   body: Record<string, unknown>,
   signal: AbortSignal,
+  baseUrl = "https://api.x.ai/v1/responses",
 ): Promise<ApiResponse> {
   const https = await import("node:https");
   const payload = JSON.stringify(body);
+  const endpoint = new URL(baseUrl);
+  const agent = process.env.HTTPS_PROXY ? new (await import("https-proxy-agent")).HttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
   return new Promise((resolve, reject) => {
     const req = https.request(
       {
-        hostname: "api.x.ai",
-        path: "/v1/responses",
+        protocol: endpoint.protocol,
+        hostname: endpoint.hostname,
+        port: endpoint.port || undefined,
+        agent,
+        path: endpoint.pathname,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -159,43 +169,66 @@ export const readImage = createServerFn({ method: "POST" })
     }
     if (dataUrl.length > MAX_DATA_URL) throw new Error("图片太大，请换一张更小的");
     const filename = typeof raw.filename === "string" ? raw.filename.slice(0, 180) : "图片";
-    return { dataUrl, filename, mode: asMode(raw.mode), lang: asLang(raw.lang) };
+    const ocrText = typeof raw.ocrText === "string" ? raw.ocrText.slice(0, 8000) : "";
+    return { dataUrl, filename, mode: asMode(raw.mode), lang: asLang(raw.lang), ocrText };
   })
   .handler(async ({ data }) => {
-    const apiKey = process.env.XAI_API_KEY;
+    const apiKey = process.env.SILICONFLOW_API_KEY ?? process.env.XAI_API_KEY;
     if (!apiKey) return { ok: false as const, error: "读图服务还没接上" };
+    const siliconFlow = Boolean(process.env.SILICONFLOW_API_KEY);
+    const model = siliconFlow
+      ? (process.env.SILICONFLOW_VISION_MODEL ?? "Qwen/Qwen2.5-VL-7B-Instruct")
+      : "grok-4.7";
 
-    const prompt = buildPrompt(data.mode, data.lang, data.filename);
-    const payload: Record<string, unknown> = {
-      model: "grok-4.7",
-      store: false,
-      max_output_tokens: tokenCap(data.mode),
-      reasoning: { effort: "low" },
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_image", image_url: data.dataUrl, detail: "high" },
-            { type: "input_text", text: prompt },
+    const prompt = buildPrompt(data.mode, data.lang, data.filename, data.ocrText);
+    const payload: Record<string, unknown> = siliconFlow
+      ? {
+          model,
+          max_tokens: tokenCap(data.mode),
+          temperature: 0.1,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "image_url", image_url: { url: data.dataUrl } },
+                { type: "text", text: prompt },
+              ],
+            },
           ],
-        },
-      ],
-    };
+        }
+      : {
+          model,
+          store: false,
+          max_output_tokens: tokenCap(data.mode),
+          reasoning: { effort: "low" },
+          input: [
+            {
+              role: "user",
+              content: [
+                { type: "input_image", image_url: data.dataUrl, detail: "high" },
+                { type: "input_text", text: prompt },
+              ],
+            },
+          ],
+        };
 
     try {
       const signal = AbortSignal.timeout(90_000);
-      let response = await postResponses(apiKey, payload, signal);
+      const endpoint = siliconFlow
+        ? `${process.env.SILICONFLOW_BASE_URL ?? "https://api.siliconflow.com/v1"}/chat/completions`
+        : "https://api.x.ai/v1/responses";
+      let response = await postResponses(apiKey, payload, signal, endpoint);
       if (response.status === 400) {
         if (/reasoning/i.test(response.body)) {
           delete payload.reasoning;
-          response = await postResponses(apiKey, payload, signal);
+          response = await postResponses(apiKey, payload, signal, endpoint);
         } else {
           console.error("readImage 400");
           return fail(400);
         }
       } else if (response.status === 429 || response.status >= 500) {
         await new Promise((resolve) => setTimeout(resolve, 700));
-        response = await postResponses(apiKey, payload, signal);
+        response = await postResponses(apiKey, payload, signal, endpoint);
       }
 
       if (response.status < 200 || response.status >= 300) {
@@ -204,7 +237,14 @@ export const readImage = createServerFn({ method: "POST" })
       }
 
       const json: unknown = JSON.parse(response.body);
-      const text = cleanSurrogate(extractText(json));
+      const responseBody = siliconFlow
+        ? (() => {
+            const body = json as { choices?: Array<{ message?: { content?: unknown } }> };
+            const content = body.choices?.[0]?.message?.content;
+            return typeof content === "string" ? content : "";
+          })()
+        : extractText(json);
+      const text = cleanSurrogate(responseBody);
       if (!text) {
         console.error("readImage empty output");
         return { ok: false as const, error: "没有读出文字，请再试一次" };

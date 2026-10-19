@@ -9,4 +9,5 @@ screenshots/
 *.log
 dist/
 .output/
+release/
 .DS_Store
