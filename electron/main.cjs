@@ -111,17 +111,33 @@ ipcMain.handle("luowen:paste-result", async (_event, text) => {
 
 ipcMain.handle("luowen:cloud-settings", () => ({
   enabled: Boolean(readCloudKey()),
+  baseUrl: (() => {
+    try {
+      return JSON.parse(require("node:fs").readFileSync(settingsPath(), "utf8")).siliconFlowBaseUrl || "";
+    } catch {
+      return "";
+    }
+  })(),
   model: process.env.SILICONFLOW_VISION_MODEL || "Qwen/Qwen2.5-VL-7B-Instruct",
 }));
 
-ipcMain.handle("luowen:set-cloud-key", async (_event, key) => {
+ipcMain.handle("luowen:set-cloud-settings", async (_event, input) => {
+  const key = input?.key;
+  const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim().replace(/\/$/, "") : "";
   if (typeof key !== "string" || key.length > 500) throw new Error("API key 格式无效");
-  if (!safeStorage.isEncryptionAvailable()) throw new Error("系统安全存储不可用，无法安全保存 API key");
+  if (baseUrl && !/^https?:\/\//i.test(baseUrl)) throw new Error("API 地址必须以 http:// 或 https:// 开头");
+  if (key.trim() && !safeStorage.isEncryptionAvailable()) throw new Error("系统安全存储不可用，无法安全保存 API key");
   const fs = require("node:fs/promises");
   await fs.mkdir(app.getPath("userData"), { recursive: true });
-  const encrypted = key.trim() ? safeStorage.encryptString(key.trim()).toString("base64") : "";
-  await fs.writeFile(settingsPath(), JSON.stringify({ siliconFlowKey: encrypted }), { mode: 0o600 });
-  return { enabled: Boolean(encrypted) };
+  let siliconFlowKey = "";
+  try {
+    siliconFlowKey = JSON.parse(await fs.readFile(settingsPath(), "utf8")).siliconFlowKey || "";
+  } catch {
+    // First save creates the settings file.
+  }
+  if (key.trim()) siliconFlowKey = safeStorage.encryptString(key.trim()).toString("base64");
+  await fs.writeFile(settingsPath(), JSON.stringify({ siliconFlowKey, siliconFlowBaseUrl: baseUrl }), { mode: 0o600 });
+  return { enabled: Boolean(key.trim() || readCloudKey()), baseUrl };
 });
 
 ipcMain.handle("luowen:cloud-vision", async (_event, input) => {
@@ -131,7 +147,13 @@ ipcMain.handle("luowen:cloud-vision", async (_event, input) => {
     throw new Error("图片无效或过大");
   }
   const model = process.env.SILICONFLOW_VISION_MODEL || "Qwen/Qwen2.5-VL-7B-Instruct";
-  const baseUrl = (process.env.SILICONFLOW_BASE_URL || "https://api.siliconflow.com/v1").replace(/\/$/, "");
+  let savedBaseUrl = "";
+  try {
+    savedBaseUrl = JSON.parse(require("node:fs").readFileSync(settingsPath(), "utf8")).siliconFlowBaseUrl || "";
+  } catch {
+    // Use the default endpoint until one is configured.
+  }
+  const baseUrl = (savedBaseUrl || process.env.SILICONFLOW_BASE_URL || "https://api.siliconflow.com/v1").replace(/\/$/, "");
   const response = await new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model,

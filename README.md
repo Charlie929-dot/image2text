@@ -5,7 +5,7 @@ Windows 桌面图片转文字工具。默认使用本地 Tesseract OCR，图片�
 ## Windows 桌面使用
 
 1. 安装并打开落文桌面版。
-2. 在 SiliconFlow 控制台创建 API key（仅云端视觉模式需要），粘贴到应用中的密钥框并保存。密钥使用 Windows 系统安全存储加密。
+2. 需要云端视觉时，在窗口顶部“云端视觉”旁填写 API 地址和 API 密钥并保存。API 地址可留空以使用 SiliconFlow 默认地址；密钥使用 Windows 系统安全存储加密。
 3. 复制一张图片，切换到要输入文字的应用并点击目标位置。
 4. 按 `Ctrl+Shift+O`。落文在后台用本地 OCR 识别剪贴板图片，然后将结果粘贴到原来的光标处。
 
@@ -45,7 +45,7 @@ npm run build
 npm run desktop:win
 ```
 
-桌面安装包输出到 `release/`。`npm run build` 保持网站部署使用的 Vercel preset；桌面构建自动切换 Nitro Node server preset。OCR worker、WASM 核心及简体中文/英文精简训练数据在构建时复制到 `public/ocr`，首次构建需安装相应 npm 数据包。运行 OCR 不需要下载模型。
+桌面安装包输出到 `release/`。安装时会创建“落文”桌面和开始菜单快捷方式。`npm run build` 保持网站部署使用的 Vercel preset；桌面构建自动切换 Nitro Node server preset。OCR worker、WASM 核心及简体中文/英文精简训练数据在构建时复制到 `public/ocr`，首次构建需安装相应 npm 数据包。运行 OCR 不需要下载模型。
 
 ## 网站部署
 

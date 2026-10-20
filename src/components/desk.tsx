@@ -77,6 +77,7 @@ export function Desk() {
   const [lang, setLang] = useState<Lang>("zh");
   const [provider, setProvider] = useState<"local" | "cloud">("local");
   const [cloudKey, setCloudKey] = useState("");
+  const [cloudBaseUrl, setCloudBaseUrl] = useState("");
   const [cloudReady, setCloudReady] = useState(false);
   const [cloudNotice, setCloudNotice] = useState("");
   const [history, setHistory] = useState<HistItem[]>([]);
@@ -305,7 +306,10 @@ export function Desk() {
   useEffect(() => {
     const desktop = window.luowenDesktop;
     if (!desktop) return;
-    void desktop.getCloudSettings().then((settings) => setCloudReady(settings.enabled));
+    void desktop.getCloudSettings().then((settings) => {
+      setCloudReady(settings.enabled);
+      setCloudBaseUrl(settings.baseUrl);
+    });
     const unsubscribeStatus = desktop.onHotkeyStatus(setStatus);
     const unsubscribeOcr = desktop.onHotkeyOcr((imageDataUrl) => {
       setStatus("正在本地识别剪贴板图片…");
@@ -425,27 +429,36 @@ export function Desk() {
                 event.preventDefault();
                 const desktop = window.luowenDesktop;
                 if (!desktop) return;
-                void desktop.setCloudKey(cloudKey).then(({ enabled }) => {
+                void desktop.setCloudSettings({ key: cloudKey, baseUrl: cloudBaseUrl }).then(({ enabled }) => {
                   setCloudReady(enabled);
                   setCloudKey("");
-                  setCloudNotice(enabled ? "SiliconFlow key 已加密保存" : "已移除 SiliconFlow key");
+                  setCloudNotice(enabled ? "API 配置已保存，密钥在本机加密存储" : "API 地址已保存；填写密钥后可使用云端视觉");
                 }).catch((error: unknown) => {
                   setCloudNotice(error instanceof Error ? error.message : "保存失败");
                 });
               }}
             >
-              <label className="sr-only" htmlFor="siliconflow-key">SiliconFlow API key</label>
+              <label className="sr-only" htmlFor="siliconflow-url">SiliconFlow API 地址</label>
+              <input
+                id="siliconflow-url"
+                type="url"
+                value={cloudBaseUrl}
+                onChange={(event) => setCloudBaseUrl(event.target.value)}
+                placeholder="API 地址（留空使用默认地址）"
+                className="min-h-11 w-64 bg-paper px-3 text-sm text-walnut placeholder:text-walnut/50"
+              />
+              <label className="sr-only" htmlFor="siliconflow-key">SiliconFlow API 密钥</label>
               <input
                 id="siliconflow-key"
                 type="password"
                 autoComplete="new-password"
                 value={cloudKey}
                 onChange={(event) => setCloudKey(event.target.value)}
-                placeholder={cloudReady ? "云端密钥已保存" : "SiliconFlow API key"}
+                placeholder={cloudReady ? "密钥已保存（留空保持不变）" : "API 密钥"}
                 className="min-h-11 w-52 bg-paper px-3 text-sm text-walnut placeholder:text-walnut/50"
               />
               <button type="submit" className={`min-h-11 px-3 text-sm ring-1 ring-cream/20 ${focusRing}`}>
-                保存密钥
+                保存 API 配置
               </button>
               {cloudNotice ? <span className="text-xs text-muted" role="status">{cloudNotice}</span> : null}
             </form>

@@ -4,7 +4,7 @@ contextBridge.exposeInMainWorld("luowenDesktop", {
   pasteResult: (text) => ipcRenderer.invoke("luowen:paste-result", text),
   cloudVision: (input) => ipcRenderer.invoke("luowen:cloud-vision", input),
   getCloudSettings: () => ipcRenderer.invoke("luowen:cloud-settings"),
-  setCloudKey: (key) => ipcRenderer.invoke("luowen:set-cloud-key", key),
+  setCloudSettings: (settings) => ipcRenderer.invoke("luowen:set-cloud-settings", settings),
   onHotkeyOcr: (callback) => {
     const listener = (_event, imageDataUrl) => callback(imageDataUrl);
     ipcRenderer.on("luowen:hotkey-ocr", listener);
